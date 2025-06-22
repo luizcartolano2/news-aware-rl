@@ -12,11 +12,13 @@ if __name__ == "__main__":
             macro_file="macro_indicators.csv",
             sentiment_file="daily_sentiments.csv",
             reward_columns=["ibov_t-0", "brl_usd_t-0"],
+            feature_mode="prices+macros",
             window_size=3,
             rolling_windows=[3, 7],
-            normalize=True
+            normalize=True,
+            reward_type="log_return",
         )
-    x_train, x_val, x_test, y_train, y_val, y_test = dataset.split(train_end="2018-01-01", val_end="2019-01-01")
+    x_train, x_val, x_test, y_train, y_val, y_test = dataset.split(train_end="2015-01-01", val_end="2017-01-01")
 
     # 2. Create environments
     train_env = PortfolioEnv(x_train, y_train)
@@ -37,7 +39,7 @@ if __name__ == "__main__":
     model.learn(total_timesteps=10_000, callback=eval_callback)
 
     # 4. Save model
-    model.save("ppo_portfolio")
+    model.save(f"{MODELS_PATH}/ppo_portfolio")
 
     obs = eval_env.reset()
     done = False
