@@ -46,6 +46,8 @@ class RLDataset:
         features (list): List of feature column names.
         scaler (StandardScaler): Scaler for normalizing features if `normalize` is True.
         reward_columns (Optional[str]): Column name for the reward signal, e.g., 'ibov' or 'brl_usd'.
+        reward_horizon (int): Number of steps ahead to compute the reward.
+        reward_type (Literal["log_return", "sharpe", "sortino", "volatility_penalty"]):
         window_size (int): Size of the time window for lagged features (1 = no lags, 3 = t-2, t-1, t).
         rolling_windows (Optional[List[int]]): List of rolling window sizes for additional features.
     """
@@ -58,6 +60,7 @@ class RLDataset:
             feature_mode: FeatureMode = "all",
             reward_columns: Optional[List[str]] = None,
             reward_horizon: int = 1,
+            reward_type: Literal["log_return", "sharpe", "sortino", "volatility_penalty"] = "log_return",
             window_size: int = 1,  # 1 = no lags, 3 = t-2, t-1, t
             rolling_windows: Optional[List[int]] = None,
     ):
@@ -70,6 +73,7 @@ class RLDataset:
         self.window_size = window_size
         self.reward_columns = reward_columns or []  # e.g., 'ibov' or 'brl_usd'
         self.reward_horizon = reward_horizon
+        self.reward_type = reward_type
         self.rolling_windows = rolling_windows
 
         # Load and merge datasets
@@ -77,7 +81,8 @@ class RLDataset:
         self.scaler = StandardScaler() if normalize else None
         self.features = [col for col in self.df.columns if col != "date"]
 
-    def __add_lags(self, df: pd.DataFrame, window: int) -> pd.DataFrame:
+    @staticmethod
+    def __add_lags(df: pd.DataFrame, window: int) -> pd.DataFrame:
         """
         Adds lagged features to the DataFrame based on the specified window size.
         This method creates lagged versions of the features by shifting them
@@ -89,26 +94,65 @@ class RLDataset:
         if window <= 1:
             return df
         lagged = [df[["date"]].copy()]
+
         for i in range(window):
             shifted = df.drop(columns=["date"]).shift(i)
-            shifted.columns = [f"{col}_t-{i}" for col in self.features]
+            shifted.columns = [f"{col}_t-{i}" for col in shifted.columns]
             lagged.append(shifted)
         combined = pd.concat(lagged, axis=1).dropna().reset_index(drop=True)
         return combined
 
     @staticmethod
-    def __add_reward(df: pd.DataFrame, assets: List[str], horizon: int = 1) -> pd.DataFrame:
+    def __add_reward(
+            df: pd.DataFrame,
+            assets: List[str],
+            horizon: int = 1,
+            reward_type: Literal["log_return", "sharpe", "sortino", "volatility_penalty"] = "log_return",
+            rolling_window: int = 10,
+            alpha: float = 0.1,
+            minimum_std: float = 1e-6,
+    ) -> pd.DataFrame:
         """
-        Adds reward columns based on forward returns of selected assets.
+        Adds reward columns to the DataFrame based on specified reward formulation.
+
         :param df: DataFrame with asset prices.
         :param assets: List of asset column names to compute returns for.
-        :param horizon: How many steps ahead to compute the return.
-        :return: DataFrame with added reward columns (e.g., 'asset1_return_t+1').
+        :param horizon: Steps ahead for future return.
+        :param reward_type: Type of reward to compute.
+        :param rolling_window: Rolling window for std in risk-adjusted returns.
+        :param alpha: Penalty weight (for volatility_penalty).
+        :param minimum_std: Minimum std to avoid division by zero.
+        :return: DataFrame with added reward columns.
         """
         df = df.copy()
+
         for asset in assets:
-            df[f"{asset}_return_t+{horizon}"] = (np.log(df[asset]) - np.log(df[asset].shift(horizon)))
-        return df
+            # Compute log return
+            log_ret = np.log(df[asset]) - np.log(df[asset].shift(horizon))
+
+            if reward_type == "log_return":
+                reward = log_ret
+
+            elif reward_type == "sharpe":
+                rolling_std = log_ret.rolling(rolling_window).std().clip(lower=minimum_std)
+                reward = log_ret / rolling_std
+
+            elif reward_type == "sortino":
+                downside = log_ret.copy()
+                downside[downside > 0] = 0
+                rolling_std_neg = downside.rolling(rolling_window).std().clip(lower=minimum_std)
+                reward = log_ret / rolling_std_neg
+
+            elif reward_type == "volatility_penalty":
+                rolling_std = log_ret.rolling(rolling_window).std().fillna(0)
+                reward = log_ret - alpha * rolling_std
+
+            else:
+                raise ValueError(f"Unsupported reward_type: {reward_type}")
+
+            df[f"{asset}_reward_t+{horizon}"] = reward
+
+        return df.dropna()
 
     def __add_rolling_statistics(self, df: pd.DataFrame, windows: List[int]) -> pd.DataFrame:
         """
@@ -118,8 +162,11 @@ class RLDataset:
         :return: DataFrame with added rolling features.
         """
         df = df.copy()
+        x_cols = [col for col in df.columns if
+                  col not in ["date"] + [f"{r}_return_t+{self.reward_horizon}" for r in self.reward_columns]]
+
         for window in windows:
-            for col in self.features:
+            for col in x_cols:
                 df[f"{col}_mean_{window}"] = df[col].rolling(window).mean()
                 df[f"{col}_std_{window}"] = df[col].rolling(window).std()
         return df
@@ -180,8 +227,8 @@ class RLDataset:
         test = df[df["date"] >= val_end]
 
         x_cols = [col for col in train.columns if
-                  col not in ["date"] + [f"{r}_return_t+{self.reward_horizon}" for r in self.reward_columns]]
-        y_cols = [f"{r}_return_t+{self.reward_horizon}" for r in self.reward_columns]
+                  col not in ["date"] + [f"{r}_reward_t+{self.reward_horizon}" for r in self.reward_columns]]
+        y_cols = [f"{r}_reward_t+{self.reward_horizon}" for r in self.reward_columns]
 
         x_train, x_val, x_test = train[x_cols], val[x_cols], test[x_cols]
         y_train, y_val, y_test = train[y_cols], val[y_cols], test[y_cols]
