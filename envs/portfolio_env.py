@@ -220,11 +220,12 @@ class PortfolioEnv(gym.Env):
 
         return self._get_observation(), reward, terminated, False, info
 
-    def render(self, mode: str = 'human') -> None:
+    def render(self, mode: str = 'human', filename: str = '') -> None:
         """
         Render the environment's current state.
         This method visualizes the portfolio value, asset allocations, returns comparison, and transaction costs.
         It supports both human-readable and ANSI text modes.
+        :param filename: a string for saving the plot (optional)
         :param mode: 'human' for graphical rendering, 'ansi' for text output
         :return: a NoneType
         """
@@ -266,8 +267,10 @@ class PortfolioEnv(gym.Env):
             plt.ylabel('Cost ($)')
 
             plt.tight_layout()
-            plt.show()
-
+            if filename == '':
+                plt.show()
+            else:
+                plt.savefig(filename)
         elif mode == 'ansi':
             print(f"\nStep {self.current_step}/{self.max_steps}")
             print(f"Portfolio Value: ${self.portfolio_value:,.2f}")

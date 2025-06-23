@@ -2,6 +2,7 @@
 data
 models
 logs
+outputs
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

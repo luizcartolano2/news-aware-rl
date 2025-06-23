@@ -11,3 +11,9 @@ DATA_PATH = os.path.join(ROOT_PATH, "data")
 MODELS_PATH = os.path.join(ROOT_PATH, "models")
 # Define the path to the logs directory
 LOGS_PATH = os.path.join(ROOT_PATH, "logs")
+# Define the path to the outputs directory
+OUTPUTS_PATH = os.path.join(ROOT_PATH, "outputs")
+# Define the path to the images directory
+IMAGES_PATH = os.path.join(OUTPUTS_PATH, "images")
+# Define the path to the text directory
+TEXT_PATH = os.path.join(OUTPUTS_PATH, "texts")
